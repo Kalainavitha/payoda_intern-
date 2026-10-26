@@ -6,7 +6,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.repositories import sqlite_repo
-from app.routers import projects, employees, roles, plans, health
+from app.routers import projects, employees, roles, plans, plan_lists, health
 
 
 @asynccontextmanager
@@ -49,3 +49,4 @@ app.include_router(projects.router)
 app.include_router(employees.router)
 app.include_router(roles.router)
 app.include_router(plans.router)
+app.include_router(plan_lists.router)  # GET /api/plans, GET /api/archive, plan actions

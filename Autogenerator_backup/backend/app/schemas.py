@@ -4,7 +4,21 @@ from datetime import date, datetime
 from typing import Literal, Any, Optional
 from pydantic import BaseModel, Field, model_validator, field_validator
 
-ProjectType = Literal["Web Application", "Mobile Application", "API", "AI/ML", "Testing", "Other"]
+# Must include every option offered by the New Plan form in App.jsx,
+# otherwise POST /projects fails with a 422 for those choices.
+ProjectType = Literal[
+    "Web Application",
+    "Mobile Application",
+    "API",
+    "API Development",
+    "AI/ML",
+    "AI/ML Project",
+    "Testing",
+    "QA Automation",
+    "Cloud Migration",
+    "Data Engineering",
+    "Other",
+]
 Priority = Literal["Low", "Medium", "High", "Critical"]
 
 

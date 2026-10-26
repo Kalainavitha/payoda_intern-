@@ -529,6 +529,18 @@ def save_plan(
             ),
         )
 
+        # Regenerating replaces the previous active plan for this project,
+        # so it must not show up twice in "Generated Plans".
+        db.execute(
+            """
+            UPDATE plan_history
+            SET status = 'superseded'
+            WHERE project_id = ?
+              AND status = 'active'
+            """,
+            (project_id,),
+        )
+
         # Save history.
         db.execute(
             """
@@ -755,3 +767,96 @@ def archive_plan(plan_id: str) -> bool:
         )
 
     return cursor.rowcount > 0
+
+def restore_plan(plan_id: str) -> bool:
+    """
+    Move an archived plan back to the active list.
+    """
+
+    with connection() as db:
+
+        cursor = db.execute(
+            """
+            UPDATE plan_history
+            SET status = 'active',
+                archived_at = NULL
+            WHERE id = ?
+              AND status = 'archived'
+            """,
+            (plan_id,),
+        )
+
+    return cursor.rowcount > 0
+
+
+def delete_plan(plan_id: str) -> bool:
+    """
+    Permanently delete a plan (active or archived).
+
+    The project itself is kept; if it no longer has any visible plan
+    it returns to 'draft' so it can be regenerated.
+    """
+
+    with connection() as db:
+
+        row = db.execute(
+            """
+            SELECT project_id
+            FROM plan_history
+            WHERE id = ?
+            """,
+            (plan_id,),
+        ).fetchone()
+
+        if not row:
+            return False
+
+        project_id = row["project_id"]
+
+        db.execute(
+            "DELETE FROM plan_history WHERE id = ?",
+            (plan_id,),
+        )
+
+        # Drop the "current plan" copy if it is the one being deleted.
+        current = db.execute(
+            "SELECT payload FROM plans WHERE project_id = ?",
+            (project_id,),
+        ).fetchone()
+
+        if current and json.loads(current["payload"]).get("plan_id") == plan_id:
+            db.execute(
+                "DELETE FROM plans WHERE project_id = ?",
+                (project_id,),
+            )
+
+        remaining = db.execute(
+            """
+            SELECT 1
+            FROM plan_history
+            WHERE project_id = ?
+              AND status IN ('active', 'archived')
+            LIMIT 1
+            """,
+            (project_id,),
+        ).fetchone()
+
+        if not remaining:
+            project_row = db.execute(
+                "SELECT payload FROM projects WHERE id = ?",
+                (project_id,),
+            ).fetchone()
+
+            if project_row:
+                project = json.loads(project_row["payload"])
+                project["status"] = "draft"
+                db.execute(
+                    """
+                    UPDATE projects
+                    SET payload = ?, status = 'draft'
+                    WHERE id = ?
+                    """,
+                    (json.dumps(project), project_id),
+                )
+
+    return True

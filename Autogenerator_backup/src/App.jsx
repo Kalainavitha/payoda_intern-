@@ -107,7 +107,8 @@ export default function App() {
     try {
       const [p, e, a, gp] = await Promise.all([
         apiRequest('/projects'), apiRequest('/employees'),
-        apiRequest('/projects/archive').catch(() => []), apiRequest('/plans').catch(() => []) 
+        // NOTE: '/projects/archive' would be captured by '/projects/{project_id}' and 404.
+        apiRequest('/archive').catch(() => []), apiRequest('/plans').catch(() => [])
       ])
       setProjects(p.filter(proj => proj.status !== 'deleted'))
       setEmployees(e); setArchived(a); setGeneratedPlans(gp); setError('')
@@ -267,6 +268,39 @@ export default function App() {
   async function removePerson(id) {
     if(!confirm('Remove this team member?')) return;
     try { await apiRequest(`/employees/${id}`, { method: 'DELETE' }); await refresh() } catch (err) { setError(err.message) }
+  }
+
+  async function reviewProjectPlan(projectId) {
+    setError('')
+    try {
+      const plan = await apiRequest(`/projects/${projectId}/plan`)
+      setGeneratedPlanResult(plan)
+      setPage('wizard')
+    } catch (err) {
+      setError(err.message)
+    }
+  }
+
+  async function planAction(planId, action) {
+    const confirmText = {
+      archive: 'Move this plan to the archive?',
+      restore: 'Restore this plan to Generated Plans?',
+      delete: 'Permanently delete this plan? This cannot be undone.',
+    }[action]
+    if (!confirm(confirmText)) return
+    setError('')
+    try {
+      if (action === 'delete') {
+        await apiRequest(`/plans/${planId}`, { method: 'DELETE' })
+        setNotice('Plan deleted.')
+      } else {
+        await apiRequest(`/plans/${planId}/${action}`, { method: 'POST' })
+        setNotice(action === 'archive' ? 'Plan archived.' : 'Plan restored.')
+      }
+      await refresh()
+    } catch (err) {
+      setError(err.message)
+    }
   }
 
   async function discardProject(id) {
@@ -436,7 +470,7 @@ export default function App() {
                       <p style={{ margin: 0, color: '#64748b', fontSize: '0.9rem' }}>Deadline: {p.deadline} <span style={{ margin: '0 8px' }}>|</span> Status: <span style={{ color: p.status === 'generated' ? '#16a34a' : '#ea580c', fontWeight: 600 }}>{p.status.toUpperCase()}</span></p>
                     </div>
                     <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
-                      <button className="button button-outline" onClick={() => { setGeneratedPlanResult(p.plan); setPage('wizard') }} style={{ padding: '8px 16px', borderColor: '#1a3b32', color: '#1a3b32' }}>Review Plan</button>
+                      <button className="button button-outline" onClick={() => reviewProjectPlan(p.id)} disabled={p.status !== 'generated'} style={{ padding: '8px 16px', borderColor: '#1a3b32', color: '#1a3b32', opacity: p.status === 'generated' ? 1 : 0.4 }}>Review Plan</button>
                       <button onClick={() => discardProject(p.id)} title="Discard Draft" style={{ background: 'none', border: '1px solid #ef4444', color: '#ef4444', cursor: 'pointer', borderRadius: '6px', padding: '8px', display: 'flex', alignItems: 'center' }}>
                         <X size={18} />
                       </button>
@@ -471,6 +505,13 @@ export default function App() {
                     <option>Other</option>
                   </select>
                 </label>
+
+                {projectForm.project_type === 'Other' && (
+                  <label style={{ display: 'flex', flexDirection: 'column', gap: '5px' }}>
+                    <span style={{ fontWeight: 500, color: '#334155' }}>Custom Project Type</span>
+                    <input required placeholder="e.g. IoT Platform" value={projectForm.custom_project_type || ''} onChange={e => setProjectForm({...projectForm, custom_project_type: e.target.value})} style={{ padding: '10px', border: '1px solid #cbd5e1', borderRadius: '6px' }} />
+                  </label>
+                )}
 
                 <div style={{ display: 'flex', gap: '15px' }}>
                   <label style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '5px' }}>
@@ -620,9 +661,18 @@ export default function App() {
               <div style={{ display: 'grid', gap: '15px' }}>
                 {generatedPlans.map(plan => (
                   <div key={plan.id} style={{ border: '1px solid #e2e8f0', padding: '20px', borderRadius: '10px', background: 'white' }}>
-                    <h4 style={{ margin: '0 0 10px 0', color: '#1a3b32' }}>Plan for Project ID: {plan.project_id}</h4>
-                    <p style={{ color: '#64748b', margin: '0 0 15px 0' }}>Generated on: {new Date(plan.generated_at).toLocaleDateString()}</p>
-                    <button className="button button-outline" onClick={() => { setGeneratedPlanResult(plan); setPage('wizard'); }} style={{ padding: '8px 16px', borderColor: '#1a3b32', color: '#1a3b32' }}>View Details</button>
+                    <h4 style={{ margin: '0 0 10px 0', color: '#1a3b32' }}>{plan.project_name || `Project ${plan.project_id}`}</h4>
+                    <p style={{ color: '#64748b', margin: '0 0 15px 0' }}>
+                      Generated on: {new Date(plan.generated_at).toLocaleDateString()}
+                      {plan.completion_date && <> <span style={{ margin: '0 8px' }}>|</span> Completes: {plan.completion_date}</>}
+                      <span style={{ margin: '0 8px' }}>|</span>
+                      {plan.deadline_at_risk ? <span style={{ color: '#dc2626', fontWeight: 600 }}>At Risk</span> : <span style={{ color: '#16a34a', fontWeight: 600 }}>On Track</span>}
+                    </p>
+                    <div style={{ display: 'flex', gap: '10px' }}>
+                      <button className="button button-outline" onClick={() => { setGeneratedPlanResult(plan); setPage('wizard'); }} style={{ padding: '8px 16px', borderColor: '#1a3b32', color: '#1a3b32' }}>View Details</button>
+                      <button className="button button-outline" onClick={() => planAction(plan.id, 'archive')} style={{ padding: '8px 16px', borderColor: '#64748b', color: '#64748b', display: 'flex', alignItems: 'center', gap: '6px' }}><Archive size={16}/> Archive</button>
+                      <button onClick={() => planAction(plan.id, 'delete')} style={{ padding: '8px 16px', background: 'none', border: '1px solid #ef4444', color: '#ef4444', borderRadius: '6px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px' }}><Trash2 size={16}/> Delete</button>
+                    </div>
                   </div>
                 ))}
               </div>
@@ -637,7 +687,11 @@ export default function App() {
                 {archived.map(a => (
                   <div key={a.id} style={{ border: '1px solid #e2e8f0', padding: '20px', marginBottom: '10px', borderRadius: '10px', background: '#f8fafc' }}>
                     <h4 style={{ margin: '0 0 5px 0', color: '#475569' }}>{a.project_name}</h4>
-                    <p style={{ color: '#94a3b8', margin: 0, fontSize: '0.9rem' }}>Archived on: {new Date(a.archived_at).toLocaleDateString()}</p>
+                    <p style={{ color: '#94a3b8', margin: '0 0 12px 0', fontSize: '0.9rem' }}>Archived on: {new Date(a.archived_at).toLocaleDateString()}</p>
+                    <div style={{ display: 'flex', gap: '10px' }}>
+                      <button className="button button-outline" onClick={() => planAction(a.id, 'restore')} style={{ padding: '6px 14px', borderColor: '#1a3b32', color: '#1a3b32' }}>Restore</button>
+                      <button onClick={() => planAction(a.id, 'delete')} style={{ padding: '6px 14px', background: 'none', border: '1px solid #ef4444', color: '#ef4444', borderRadius: '6px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px' }}><Trash2 size={14}/> Delete</button>
+                    </div>
                   </div>
                 ))}
               </div>
